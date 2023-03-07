@@ -155,7 +155,7 @@ impl TLV {
                 TLV::ChannelOffset(bytes.get_u32())
             },
             0x29 => {
-                let nbytes = buf[1]// check len in bytes
+                let nbytes = buf[1];// check len in bytes
                 if nbytes == 1 {
                     let a: [u8;6] = buf[2..8].try_into().unwrap();
                     TLV::PayloadLabel6Char(a)} 
