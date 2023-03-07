@@ -4,6 +4,43 @@ use bytes_cast::{BytesCast, unaligned};
 //https://gitlab.nist.gov/gitlab/qsg/hw-ipcores/packetizer/-/blob/master/doc/packetformat.md
 
 const HEADER_MAGIC: u32  = 0x810b00ff;
+const HEADER_VERSION: u8 = 1u8;
+
+struct PacketMaker {
+    srcid: u32,
+    seqno: u32,
+    tlvs: Vec<TLV> // this should be only static tlvs
+}
+
+impl PacketMaker {
+    fn new(srcid: u32, tlvs: Vec<TLV>) -> PacketMaker {
+        PacketMaker { srcid: srcid, seqno: 0, tlvs: tlvs }
+    }
+
+    // this should take dynamic tlvs, like timestamp
+    fn make(mut self: &mut PacketMaker, payload: Vec<u8>) -> Bytes {
+        let len_tlvs: usize = self.tlvs.iter().map(|x| x.len()).sum();
+        let headerlength = len_tlvs + HeaderNoTLV::len(); 
+        let payloadlength: u16 = payload.len().try_into().unwrap();       
+        let header_no_tlv = HeaderNoTLV{
+            version: HEADER_VERSION,
+            headerlength: headerlength.try_into().unwrap(),
+            payloadlength: payloadlength.into(),
+            magic: HEADER_MAGIC.into(),
+            srcid: self.srcid.into(),
+            seqno: self.seqno.into()
+        };           
+        let mut buf = BytesMut::with_capacity(headerlength+payload.len());
+        buf.put_slice(header_no_tlv.as_bytes());
+        for tlv in self.tlvs.iter() {
+            tlv.write_to(&mut buf)
+        }
+        buf.put_slice(payload.as_bytes());
+        self.seqno +=1;
+        return buf.freeze()
+    }
+
+}
 
 #[derive(Debug, BytesCast, Clone, Copy, PartialEq)]
 #[repr(C)]
@@ -17,16 +54,16 @@ seqno: unaligned::U32Be
 }
 
 impl HeaderNoTLV {
-    fn new_with_next_seqno (mut self: HeaderNoTLV) -> HeaderNoTLV {
-        self.seqno = (self.seqno.get() + 1).into();
-        self
-    }
-    fn len(self: HeaderNoTLV) -> usize {
+    // fn new_with_next_seqno (mut self: HeaderNoTLV) -> HeaderNoTLV {
+    //     self.seqno = (self.seqno.get() + 1).into();
+    //     self
+    // }
+    fn len() -> usize {
         16
     }
-    fn write_to(self: &HeaderNoTLV, buf: &mut BytesMut) {
-        buf.put_slice(&self.as_bytes());
-    }
+    // fn write_to(self: &HeaderNoTLV, buf: &mut BytesMut) {
+    //     buf.put_slice(&self.as_bytes());
+    // }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,12 +76,12 @@ struct Header {
 impl Header{
     fn len(self: &Header) -> usize {
         let len_tlvs: usize = self.tlvs.iter().map(|x| x.len()).sum();
-        len_tlvs + self.header_no_tlv.len()
+        len_tlvs + HeaderNoTLV::len()
     }
     fn write_to(self: &Header, buf: &mut BytesMut) {
         let mut header_no_tlv_correct_len = self.header_no_tlv.clone();
         header_no_tlv_correct_len.headerlength = u8::try_from(self.len()).unwrap();
-        header_no_tlv_correct_len.write_to(buf);
+        buf.put_slice(header_no_tlv_correct_len.as_bytes());
         for tlv in self.tlvs.iter() {
             tlv.write_to(buf)
         }
@@ -58,7 +95,7 @@ impl Header{
         let mut header_no_tlv: HeaderNoTLV;
         let result = HeaderNoTLV::from_bytes(buf);
         let (header_no_tlv, rest) = result.unwrap();
-        let tlv_len = usize::from(header_no_tlv.headerlength)-header_no_tlv.len();
+        let tlv_len = usize::from(header_no_tlv.headerlength)-HeaderNoTLV::len();
         let tlvs = TLV::vec_from_bytes(&rest[..tlv_len]);
         Header{header_no_tlv: *header_no_tlv, tlvs: tlvs}
     }
@@ -195,29 +232,34 @@ impl TLV {
 
 fn main() {
     println!("Hello, world!");
-    let tlv = TLV::Timestamp(3u64);
-    let header_no_tlv = HeaderNoTLV{
-        version: 1u8,
-        headerlength: 0u8,
-        payloadlength: 0u16.into(),
-        magic: HEADER_MAGIC.into(),
-        srcid: 0u32.into(),
-        seqno: 0u32.into()
-    };
-    let header = Header{ header_no_tlv,
-    tlvs: vec![TLV::Timestamp(3), TLV::Null, TLV::Payloadshape([0u16,8,0])]};
-    println!("header {:?}",header.as_bytes());
-    let buf = header.as_bytes();
-    let (header_no_tlv2, rest) = HeaderNoTLV::from_bytes(&buf).unwrap();
-    println!("header_no_tlv {:?}", header_no_tlv.as_bytes());
-    println!("header_no_tlv2 {:?}", header_no_tlv2.as_bytes());
-    assert!(header_no_tlv2.headerlength == u8::try_from(header.as_bytes().len()).unwrap());
-    let (tlv, _) = TLV::try_from_bytes(&TLV::Timestamp(3).as_bytes());
-    let tlv = tlv.unwrap();
-    println!("read this tlv {:?}", tlv);
-    let header2 = Header::from_bytes(&header.as_bytes());
-    println!("header2 {:?}", header2.as_bytes());
-    assert!(header2.as_bytes() == header.as_bytes())
+    // let tlv = TLV::Timestamp(3u64);
+    // let header_no_tlv = HeaderNoTLV{
+    //     version: 1u8,
+    //     headerlength: 0u8,
+    //     payloadlength: 0u16.into(),
+    //     magic: HEADER_MAGIC.into(),
+    //     srcid: 0u32.into(),
+    //     seqno: 0u32.into()
+    // };
+    // let header = Header{ header_no_tlv,
+    // tlvs: vec![TLV::Timestamp(3), TLV::Null, TLV::Payloadshape([0u16,8,0])]};
+    // println!("header {:?}",header.as_bytes());
+    // let buf = header.as_bytes();
+    // let (header_no_tlv2, rest) = HeaderNoTLV::from_bytes(&buf).unwrap();
+    // println!("header_no_tlv {:?}", header_no_tlv.as_bytes());
+    // println!("header_no_tlv2 {:?}", header_no_tlv2.as_bytes());
+    // assert!(header_no_tlv2.headerlength == u8::try_from(header.as_bytes().len()).unwrap());
+    // let (tlv, _) = TLV::try_from_bytes(&TLV::Timestamp(3).as_bytes());
+    // let tlv = tlv.unwrap();
+    // println!("read this tlv {:?}", tlv);
+    // let header2 = Header::from_bytes(&header.as_bytes());
+    // println!("header2 {:?}", header2.as_bytes());
+    // assert!(header2.as_bytes() == header.as_bytes())
+    let tlvs = vec![TLV::Timestamp(3), TLV::Null, TLV::Payloadshape([0u16,8,0])];
+    let mut maker = PacketMaker::new(0, tlvs);
+    println!("header {:x?}",maker.make(vec![255u8]).as_bytes());
+    println!("header {:x?}",maker.make(vec![255u8]).as_bytes());
+    println!("header {:x?}",maker.make(vec![255u8]).as_bytes());
 
 
    
