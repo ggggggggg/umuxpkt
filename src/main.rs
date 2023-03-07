@@ -36,7 +36,7 @@ struct Header {
     tlvs: Vec<TLV>
 }
 
-impl Header {
+impl Header{
     fn len(self: &Header) -> usize {
         let len_tlvs: usize = self.tlvs.iter().map(|x| x.len()).sum();
         len_tlvs + self.header_no_tlv.len()
@@ -106,7 +106,7 @@ impl TLV {
         buf.put_u8(self.len8bytes());
         match self {
             TLV::Timestamp(x) => {
-                let x = unaligned::U64Be::from(x.to_owned());
+                let x = unaligned::U64Be::from(*x);
                 let b = x.as_bytes();
                 buf.put_slice(&b[2..8]);
             },
@@ -115,7 +115,7 @@ impl TLV {
             },
             TLV::Payloadshape(shape) => {
                 for (i,x) in shape.iter().enumerate() {
-                    let y : unaligned::U16Be = x.to_owned().into();
+                    let y : unaligned::U16Be = (*x).into();
                     let y = y.as_bytes();
                     buf.put_u8(y[0]);
                     buf.put_u8(y[1]);
@@ -149,8 +149,17 @@ impl TLV {
                 bytes.advance(2);
                 let x = [bytes.get_u16(), bytes.get_u16(), bytes.get_u16()];
                 TLV::Payloadshape(x)
+            },
+            0x23 => {
+                bytes.advance(4);
+                TLV::ChannelOffset(bytes.get_u32())
+            },
+            0x29 => {
+                assert!(buf[1]==1);// check len in bytes
+                let a: [u8;6] = buf[2..8].try_into().unwrap();
+                TLV::PayloadLabel6Char(a)
             }
-            _ => todo!()
+            x => panic!("tlv tag 0x{:x?} not implemented",x),
         };
         return (Some(tlv), &buf[8..])
     }
@@ -159,7 +168,7 @@ impl TLV {
         let mut v = Vec::new();
         let mut tlv: Option<TLV>;
         let mut buf = buf;
-        while true {
+        loop {
             (tlv, buf) = TLV::try_from_bytes(buf);
             match tlv {
                 None => break,
@@ -178,11 +187,7 @@ impl TLV {
 
 }
 
-#[derive(Debug)]
-struct Packet {
-    header: Header,
-    payload: Vec<u8>
-}
+
 
 fn main() {
     println!("Hello, world!");
